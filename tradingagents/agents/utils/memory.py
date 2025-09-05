@@ -5,24 +5,65 @@ from openai import OpenAI
 
 class FinancialSituationMemory:
     def __init__(self, name, config):
-        if config["backend_url"] == "http://localhost:11434/v1":
-            self.embedding = "nomic-embed-text"
+        self.config = config
+        self.llm_provider = (config.get("llm_provider") or "").lower()
+        self.is_nvidia_backend = "nvidia.com" in (config.get("backend_url") or "")
+
+        # Resolve embeddings base URL
+        explicit_embed_url = config.get("embeddings_backend_url")
+        if explicit_embed_url:
+            self.embeddings_base_url = explicit_embed_url
+        elif config["backend_url"] == "http://localhost:11434/v1":
+            self.embeddings_base_url = config["backend_url"]
+        elif self.llm_provider == "nvidia" or self.is_nvidia_backend:
+            # Use local Ollama for embeddings when NVIDIA is used for chat
+            self.embeddings_base_url = "http://localhost:11434/v1"
         else:
-            self.embedding = "text-embedding-3-small"
+            self.embeddings_base_url = config["backend_url"]
+
+        # Resolve embeddings model
+        explicit_embed_model = config.get("embeddings_model")
+        if explicit_embed_model:
+            self.embedding_model = explicit_embed_model
+        else:
+            if self.embeddings_base_url == "http://localhost:11434/v1":
+                self.embedding_model = "nomic-embed-text"
+            elif (self.llm_provider == "nvidia" or self.is_nvidia_backend) and "nvidia.com" in self.embeddings_base_url:
+                self.embedding_model = "snowflake/arctic-embed-l"
+            else:
+                self.embedding_model = "text-embedding-3-small"
+
+        # Create separate clients for chat and embeddings
         self.client = OpenAI(base_url=config["backend_url"])
+        self.embeddings_client = OpenAI(base_url=self.embeddings_base_url)
+
+        # Vector DB for memory
         self.chroma_client = chromadb.Client(Settings(allow_reset=True))
         self.situation_collection = self.chroma_client.create_collection(name=name)
 
-    def get_embedding(self, text):
-        """Get OpenAI embedding for a text"""
-        
-        response = self.client.embeddings.create(
-            model=self.embedding, input=text
-        )
+    def get_embedding(self, text: str, input_type: str = "passage"):
+        """Get an embedding for text.
+
+        input_type: "query" for search queries, "passage" for stored texts.
+        """
+        if "nvidia.com" in self.embeddings_base_url:
+            # NVIDIA Retrieval API (only used when explicitly configured)
+            response = self.embeddings_client.embeddings.create(
+                input=[text],
+                model=self.embedding_model,
+                encoding_format="float",
+                extra_body={"input_type": input_type, "truncate": "NONE"},
+            )
+        else:
+            # OpenAI-compatible embeddings (OpenAI or Ollama)
+            response = self.embeddings_client.embeddings.create(
+                model=self.embedding_model,
+                input=text,
+            )
         return response.data[0].embedding
 
     def add_situations(self, situations_and_advice):
-        """Add financial situations and their corresponding advice. Parameter is a list of tuples (situation, rec)"""
+        """Add financial situations and their corresponding advice. Parameter is a list of tuples (situation, rec)."""
 
         situations = []
         advice = []
@@ -35,7 +76,7 @@ class FinancialSituationMemory:
             situations.append(situation)
             advice.append(recommendation)
             ids.append(str(offset + i))
-            embeddings.append(self.get_embedding(situation))
+            embeddings.append(self.get_embedding(situation, input_type="passage"))
 
         self.situation_collection.add(
             documents=situations,
@@ -45,8 +86,8 @@ class FinancialSituationMemory:
         )
 
     def get_memories(self, current_situation, n_matches=1):
-        """Find matching recommendations using OpenAI embeddings"""
-        query_embedding = self.get_embedding(current_situation)
+        """Find matching recommendations using vector similarity search."""
+        query_embedding = self.get_embedding(current_situation, input_type="query")
 
         results = self.situation_collection.query(
             query_embeddings=[query_embedding],
@@ -68,46 +109,5 @@ class FinancialSituationMemory:
 
 
 if __name__ == "__main__":
-    # Example usage
-    matcher = FinancialSituationMemory()
-
-    # Example data
-    example_data = [
-        (
-            "High inflation rate with rising interest rates and declining consumer spending",
-            "Consider defensive sectors like consumer staples and utilities. Review fixed-income portfolio duration.",
-        ),
-        (
-            "Tech sector showing high volatility with increasing institutional selling pressure",
-            "Reduce exposure to high-growth tech stocks. Look for value opportunities in established tech companies with strong cash flows.",
-        ),
-        (
-            "Strong dollar affecting emerging markets with increasing forex volatility",
-            "Hedge currency exposure in international positions. Consider reducing allocation to emerging market debt.",
-        ),
-        (
-            "Market showing signs of sector rotation with rising yields",
-            "Rebalance portfolio to maintain target allocations. Consider increasing exposure to sectors benefiting from higher rates.",
-        ),
-    ]
-
-    # Add the example situations and recommendations
-    matcher.add_situations(example_data)
-
-    # Example query
-    current_situation = """
-    Market showing increased volatility in tech sector, with institutional investors 
-    reducing positions and rising interest rates affecting growth stock valuations
-    """
-
-    try:
-        recommendations = matcher.get_memories(current_situation, n_matches=2)
-
-        for i, rec in enumerate(recommendations, 1):
-            print(f"\nMatch {i}:")
-            print(f"Similarity Score: {rec['similarity_score']:.2f}")
-            print(f"Matched Situation: {rec['matched_situation']}")
-            print(f"Recommendation: {rec['recommendation']}")
-
-    except Exception as e:
-        print(f"Error during recommendation: {str(e)}")
+    # Example usage skipped in production
+    pass

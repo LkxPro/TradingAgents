@@ -152,6 +152,10 @@ def select_shallow_thinking_agent(provider) -> str:
         "ollama": [
             ("llama3.1 local", "llama3.1"),
             ("llama3.2 local", "llama3.2"),
+        ],
+        "nvidia": [
+            ("Moonshot Kimi K2 Instruct - strong general chat", "moonshotai/kimi-k2-instruct"),
+            ("DeepSeek V3.1 - fast + capable chat", "deepseek-ai/deepseek-v3.1"),
         ]
     }
 
@@ -214,6 +218,10 @@ def select_deep_thinking_agent(provider) -> str:
         "ollama": [
             ("llama3.1 local", "llama3.1"),
             ("qwen3", "qwen3"),
+        ],
+        "nvidia": [
+            ("Moonshot Kimi K2 Instruct - stronger general reasoning", "moonshotai/kimi-k2-instruct"),
+            ("DeepSeek V3.1 - advanced reasoning-capable chat", "deepseek-ai/deepseek-v3.1"),
         ]
     }
     
@@ -248,6 +256,7 @@ def select_llm_provider() -> tuple[str, str]:
         ("Google", "https://generativelanguage.googleapis.com/v1"),
         ("Openrouter", "https://openrouter.ai/api/v1"),
         ("Ollama", "http://localhost:11434/v1"),        
+        ("NVIDIA", "https://integrate.api.nvidia.com/v1"),
     ]
     
     choice = questionary.select(
